@@ -72,7 +72,7 @@ the app, copy the backup over `finance.db` and start it again.
 | `FINANCE_PORT` | Use a different port (default 8765) |
 | `FINANCE_TODAY` | Pretend today is this date (`YYYY-MM-DD`), for demos and testing |
 
-## How it's built
+## Architecture
 
 ```
 app/
@@ -107,7 +107,7 @@ a made-up household. GitHub Actions runs them on Linux and Windows.
 `app/tests/browser_selftest.html` clicks through every page and form in a real browser. It writes data, so run
 it only against demo data. Its header has the steps.
 
-## How this was built
+## Built with Claude Code
 
 This app was built with [Claude Code](https://claude.com/claude-code), Anthropic's AI coding assistant, using the
 Claude Opus 5.5 and Claude Sonnet 5.5 models. I directed the design and the requirements, and tested and reviewed the result.
