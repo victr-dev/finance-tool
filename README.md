@@ -107,6 +107,11 @@ a made-up household. GitHub Actions runs them on Linux and Windows.
 `app/tests/browser_selftest.html` clicks through every page and form in a real browser. It writes data, so run
 it only against demo data. Its header has the steps.
 
+## How this was built
+
+This app was built with [Claude Code](https://claude.com/claude-code), Anthropic's AI coding assistant, using the
+Claude Opus 5.5 and Claude Sonnet 5.5 models. I directed the design and the requirements, and tested and reviewed the result.
+
 ## License
 
 MIT
