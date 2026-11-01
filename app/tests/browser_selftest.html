@@ -1,0 +1,153 @@
+<!-- Browser self-test. Drives every form and WRITES test data, so only run it against demo data:
+     python app/seed_demo.py <demo.db> --today 2026-11-19
+     then start the server with FINANCE_DB=<demo.db> FINANCE_PORT=8799 FINANCE_TODAY=2026-11-19,
+     copy this file into app/static/, open http://localhost:8799/static/browser_selftest.html, then remove it. -->
+<!doctype html>
+<html><body>
+<iframe id="f" src="/" style="width:1300px;height:900px"></iframe>
+<pre id="out"></pre>
+<script>
+const out = document.getElementById('out');
+const log = m => { out.textContent += m + '\n'; };
+const f = document.getElementById('f');
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const errors = [];
+f.addEventListener('load', async () => {
+  const w = f.contentWindow, d = f.contentDocument;
+  w.addEventListener('error', e => errors.push(e.message));
+  w.addEventListener('unhandledrejection', e => errors.push('promise: ' + (e.reason && e.reason.message)));
+  const modalEl = () => d.querySelector('.modal-back:last-of-type');
+  const field = (label) => {
+    const lab = [...modalEl().querySelectorAll('label.f')].find(l => l.textContent.trim().startsWith(label));
+    if (!lab) throw new Error('no field ' + label);
+    return lab.querySelector('input, select, textarea');
+  };
+  const fill = (label, value) => {
+    const el = field(label);
+    if (el.tagName === 'SELECT') {
+      const opt = [...el.options].find(o => o.textContent === value || o.value === String(value));
+      if (!opt) throw new Error(`no option ${value} in ${label}`);
+      el.value = opt.value;
+    } else if (el.type === 'checkbox') el.checked = !!value;
+    else el.value = value;
+  };
+  const click = text => {
+    const b = [...modalEl().querySelectorAll('button')].find(x => x.textContent.trim() === text);
+    if (!b) throw new Error('no button ' + text);
+    b.click();
+  };
+  const api = p => fetch('/api/' + p).then(r => r.json());
+  const step = async (name, fn) => {
+    try { await fn(); await wait(500); const err = d.querySelector('.modal .err'); if (err && err.textContent) throw new Error('form error: ' + err.textContent); log('PASS ' + name); }
+    catch (e) { log('FAIL ' + name + ': ' + e.message); d.querySelectorAll('.modal-back').forEach(m => m.remove()); }
+  };
+  await wait(1000);
+  for (const pg of ['home', 'month', 'shifts', 'spending', 'income', 'budget', 'debts', 'savings', 'accounts', 'insights', 'settings']) {
+    w.location.hash = '#/' + pg; await wait(700);
+    const bad = d.querySelector('main .banner.bad:not(.mt)');
+    log((d.querySelector('main h1') ? 'PASS page ' : 'FAIL page ') + pg + (bad && !/plan|pace/.test(bad.textContent) ?' ERROR ' + bad.textContent : ''));
+  }
+  await step('add spending via form', async () => {
+    w.txForm(); await wait(200);
+    fill('Amount', '12.34'); fill('Description', 'Selftest groceries'); fill('Category', 'Groceries'); fill('Paid with', 'Checking');
+    click('Save'); await wait(600);
+    const rows = await api('t/transactions?month=2026-11');
+    if (!rows.some(r => r.description === 'Selftest groceries' && r.cat_name === 'Groceries')) throw new Error('not saved');
+  });
+  await step('log shift via form', async () => {
+    w.shiftForm(); await wait(200);
+    fill('Date', '2026-11-12'); fill('Shift', 'Night'); fill('Hours', '6'); fill('Cash tips', '222');
+    click('Save'); await wait(600);
+    const rows = await api('t/shifts?month=2026-11');
+    if (!rows.some(r => r.date === '2026-11-12' && r.tips === 222)) throw new Error('not saved');
+  });
+  await step('add income via form', async () => {
+    w.incomeForm(); await wait(200);
+    fill('Amount', '40'); fill('Type', 'Gift'); fill('Description', 'Selftest gift');
+    click('Save'); await wait(600);
+    if (!(await api('t/income?month=2026-11')).some(r => r.description === 'Selftest gift')) throw new Error('not saved');
+  });
+  let subId;
+  await step('add subscription via form', async () => {
+    w.itemForm({}, 'Subscription'); await wait(200);
+    fill('Name', 'Hulu'); fill('Monthly amount', '9.99'); fill('Due day', '22'); fill('Group', 'Wants');
+    click('Save'); await wait(600);
+    const it = (await api('lists')).budget_items.find(i => i.name === 'Hulu');
+    if (!it || it.kind !== 'Subscription' || it.amount !== 9.99) throw new Error('not saved');
+    subId = it.id;
+  });
+  await step('delete subscription (no history)', async () => {
+    const rec = (await api('lists')).budget_items.find(i => i.id === subId);
+    w.removeRecord('budget_items', rec); await wait(500);
+    click('Delete'); await wait(700);
+    if ((await api('lists')).budget_items.some(i => i.id === subId)) throw new Error('still there');
+  });
+  await step('add + archive account with history', async () => {
+    w.accountForm(); await wait(200);
+    fill('Name', 'Selftest Bank'); fill('Balance', '100');
+    click('Save'); await wait(600);
+    const a = (await api('lists')).accounts.find(x => x.name === 'Selftest Bank');
+    await fetch('/api/t/transactions', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: '2026-11-12', amount: 5, cat_type: 'item', cat_id: 7, src_type: 'account', src_id: a.id }) });
+    w.removeRecord('accounts', a); await wait(500);
+    click('Archive'); await wait(700);
+    if (!(await api('lists')).accounts.find(x => x.id === a.id).archived) throw new Error('not archived');
+  });
+  await step('add goal via form', async () => {
+    w.fundForm(); await wait(200);
+    fill('Name', 'Selftest Goal'); fill('Kind', 'Goal (one-time target)'); fill('Target', '600'); fill('Target date', '2027-02-01');
+    fill('Kept in account', 'High-Yield Savings');
+    click('Save'); await wait(600);
+    const g = (await api('overview')).funds.find(x => x.name === 'Selftest Goal');
+    if (!g || g.held_at_name !== 'High-Yield Savings') throw new Error('not saved / not linked');
+  });
+  await step('add debt via form', async () => {
+    w.debtForm(); await wait(200);
+    fill('Name', 'Selftest Card'); fill('APR', '19.99'); fill('Minimum', '35'); fill('Balance', '400');
+    click('Save'); await wait(600);
+    if (!(await api('overview')).debts.find(x => x.name === 'Selftest Card' && Math.abs(x.balance - 400) < .01)) throw new Error('not saved');
+  });
+  await step('fix balance form', async () => {
+    const a = (await api('lists')).accounts.find(x => x.name === 'Cash');
+    w.fixBalanceForm('accounts', a, 0); await wait(200);
+    fill('Real balance', '85.5');
+    click('Update balance'); await wait(600);
+    const c = (await api('overview')).accounts.find(x => x.name === 'Cash');
+    if (Math.abs(c.balance - 85.5) > .01) throw new Error('balance ' + c.balance);
+  });
+  await step('month override input', async () => {
+    w.location.hash = '#/month/2026-11'; await wait(900);
+    const row = [...d.querySelectorAll('tbody tr')].find(tr => tr.firstChild && tr.firstChild.textContent === 'Gas');
+    const inp = row.querySelector('input.cell');
+    inp.value = '260'; inp.dispatchEvent(new Event('change')); await wait(900);
+    const ln = (await api('month?m=2026-11')).sections[0].lines.find(l => l.name === 'Gas');
+    if (ln.budget !== 260) throw new Error('budget ' + ln.budget);
+  });
+  await step('shift quick tip entry', async () => {
+    await fetch('/api/t/shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: '2026-11-11', type_id: 1 }) });
+    w.location.hash = '#/home'; await wait(300); w.location.hash = '#/shifts'; await wait(900);
+    const btn = [...d.querySelectorAll('button')].find(b => b.textContent === 'Save tips');
+    const tr = btn.closest('tr'); tr.querySelectorAll('input')[1].value = '177'; btn.click(); await wait(900);
+    if (!(await api('t/shifts?month=2026-11')).some(r => r.tips === 177)) throw new Error('not saved');
+  });
+  await step('plan schedule form', async () => {
+    w.scheduleForm('2027-01'); await wait(200);
+    const sels = modalEl().querySelectorAll('.weekpick select');
+    sels[0].value = sels[0].options[1].value; sels[4].value = sels[4].options[2].value;
+    click('Add shifts'); await wait(800);
+    const n = (await api('t/shifts?month=2027-01')).length;
+    if (n < 8) throw new Error('only ' + n);
+  });
+  await step('settings save', async () => {
+    w.location.hash = '#/settings'; await wait(800);
+    const before = (await api('lists')).settings.goal;
+    const inp = d.querySelector('main input[type=number]'); inp.value = '3600';
+    [...d.querySelectorAll('main button')].find(b => b.textContent === 'Save settings').click(); await wait(800);
+    if ((await api('lists')).settings.goal !== 3600) throw new Error('not saved');
+    await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal: before }) });
+  });
+  log(errors.length ? 'JS ERRORS: ' + errors.join(' | ') : 'PASS no JS errors');
+  log('DONE');
+});
+</script>
+</body></html>
